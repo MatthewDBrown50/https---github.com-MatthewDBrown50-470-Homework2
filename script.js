@@ -1,210 +1,168 @@
-// ----------------------------------------
-// Shaders
-// ----------------------------------------
-
 const vertexShaderSource = `
     attribute vec2 aPosition;
-    uniform float uRotation; // The rotation uniform
-    uniform vec2 uCenter; // The center of rotation for the current square
+    uniform mat2 uRotationMatrix;
+    uniform vec2 uCenter;  
+
     void main() {
-        float cosRot = cos(uRotation);
-        float sinRot = sin(uRotation);
-        
-        // Translate the vertex to make uCenter the origin, then rotate and translate back
-        vec2 rotatedPosition = vec2(
-            (aPosition.x - uCenter.x) * cosRot - (aPosition.y - uCenter.y) * sinRot + uCenter.x,
-            (aPosition.x - uCenter.x) * sinRot + (aPosition.y - uCenter.y) * cosRot + uCenter.y
-        );
-        
-        gl_Position = vec4(rotatedPosition, 0.0, 1.0);
+        vec2 translatedPosition = aPosition - uCenter;
+
+        vec2 rotatedPosition = uRotationMatrix * translatedPosition;
+
+        vec2 finalPosition = rotatedPosition + uCenter;
+
+        gl_Position = vec4(finalPosition, 0.0, 1.0);
     }
 `;
 
 const fragmentShaderSource = `
     precision mediump float;
     uniform vec4 uColor;
-
     void main() {
         gl_FragColor = uColor;
     }
 `;
 
-// ----------------------------------------
-// Functions
-// ----------------------------------------
+const canvas = document.querySelector('#c');
+const canvasSize = 2;
+const gl = canvas.getContext('webgl');
+let isRotating = false;
+let startTime = null;
+let rotationAngle = 0;
+let lastRotationAngle = null;
+const rotationSpeed = 2* Math.PI / 2000;
+let rotationDirection = 1;
+let vertexBuffer = null;
+const shaderProgram = initializeWebGL();
+const positionAttributeLocation = gl.getAttribLocation(shaderProgram, "aPosition");
+gl.enableVertexAttribArray(positionAttributeLocation);
+gl.vertexAttribPointer(positionAttributeLocation, canvasSize, gl.FLOAT, false, 0, 0);
+const uColorLocation = gl.getUniformLocation(shaderProgram, 'uColor');
+gl.uniform4f(uColorLocation, 0.04, 0.6, 1.0, 1.0);  // Set color to white for instance
+gl.viewport(0, 0, canvas.width, canvas.height);
 
-function getSquareVertices(center, diameter) {
-    return [
-        center[0] - diameter / 2, center[1] + diameter / 2,
-        center[0] + diameter / 2, center[1] + diameter / 2,
-        center[0] - diameter / 2, center[1] - diameter / 2,
-        center[0] + diameter / 2, center[1] - diameter / 2,
-        center[0] - diameter / 2, center[1] - diameter / 2,
-        center[0] + diameter / 2, center[1] + diameter / 2,
-    ];
+const uRotationMatrixLocation = gl.getUniformLocation(shaderProgram, 'uRotationMatrix');
+
+function initializeWebGL() {
+    // Compile and link shaders (assuming you have utility functions for this)
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+    const program = createProgram(gl, vertexShader, fragmentShader);
+
+    gl.useProgram(program);
+
+    vertexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);  
+
+    return program;
 }
 
-function drawSierpinski(center, diameter, steps) {
-    let vertices = [];
-    
-    if (steps === 0) {
-        return vertices;
-    }
-
-    const newDiameter = diameter / 3;
-
-    // Generate vertices for the center square
-    const centralSquareCenter = [center[0], center[1]];
-    vertices = getSquareVertices(centralSquareCenter, newDiameter);
-
-    const outerSquareCenters = [
-        [center[0] - newDiameter, center[1] + newDiameter],
-        [center[0], center[1] + newDiameter],
-        [center[0] + newDiameter, center[1] + newDiameter],
-        [center[0] - newDiameter, center[1]],
-        [center[0] + newDiameter, center[1]],
-        [center[0] - newDiameter, center[1] - newDiameter],
-        [center[0], center[1] - newDiameter],
-        [center[0] + newDiameter, center[1] - newDiameter]
-    ];
-
-    for (const newCenter of outerSquareCenters) {
-        vertices = vertices.concat(drawSierpinski(newCenter, newDiameter, steps - 1));
-    }
-
-    return vertices;
-}
-
-function compileShader(source, type) {
+function createShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
 
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        console.error(`An error occurred compiling the shader: ${gl.getShaderInfoLog(shader)}`);
+        console.error(`An error occurred compiling the shaders: ${gl.getShaderInfoLog(shader)}`);
         gl.deleteShader(shader);
         return null;
     }
+
     return shader;
 }
 
-function initializeWebGL() {
-    const vertexShader = compileShader(vertexShaderSource, gl.VERTEX_SHADER);
-    const fragmentShader = compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER);    
+function createProgram(gl, vertexShader, fragmentShader) {
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
 
-    // Link the vertex and fragment shaders into a shader program
-    const shaderProgram = gl.createProgram();
-    gl.attachShader(shaderProgram, vertexShader);
-    gl.attachShader(shaderProgram, fragmentShader);
-    gl.linkProgram(shaderProgram);
-    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-        console.error('Failed to setup the shader program:', gl.getProgramInfoLog(shaderProgram));
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error('Unable to initialize the shader program:', gl.getProgramInfoLog(program));
         return null;
-    }    
-
-    // Establish the vertex buffer
-    vertexBuffer = gl.createBuffer();    
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-
-    // Use the shader program
-    gl.useProgram(shaderProgram);
-
-    // Set color for all vertices
-    const uColorLocation = gl.getUniformLocation(shaderProgram, 'uColor');
-    gl.uniform4fv(uColorLocation, [0.2, 0.6, 0.9, 1.0]);
-
-    // Enable the attribute array
-    const aPositionLocation = gl.getAttribLocation(shaderProgram, 'aPosition');
-    gl.enableVertexAttribArray(aPositionLocation);
-    gl.vertexAttribPointer(aPositionLocation, 2, gl.FLOAT, false, 0, 0);  
-    
-    return shaderProgram;
-}
-
-function drawSquare(vertices, center) {
-    // Set the rotation in the shader
-    if (lastRotationAngle !== rotationAngle) {        
-        gl.uniform1f(uRotationLocation, rotationAngle);
-        lastRotationAngle = rotationAngle;
     }
 
-    // Set the center of the current square in the shader    
-    gl.uniform2fv(uCenterLocation, center);
+    return program;
+}
 
-    // Update the vertex buffer data
+function drawSquare(vertices) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
-     
-    // Draw the square
+
+    const cosA = Math.cos(rotationAngle);
+    const sinA = Math.sin(rotationAngle);
+    const rotationMatrix = [
+        cosA, sinA,
+        -sinA, cosA
+    ];
+
+    // Compute the center of the current square
+    const centerX = (vertices[0] + vertices[4]) / 2;
+    const centerY = (vertices[1] + vertices[5]) / 2;
+
+    gl.uniformMatrix2fv(uRotationMatrixLocation, false, rotationMatrix);
+    gl.uniform2f(gl.getUniformLocation(shaderProgram, 'uCenter'), centerX, centerY);  // Set the center of the current square
+
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }
 
-function drawCarpet(numberOfSteps){
-    gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+function drawCarpet(x, y, size, iterations) {
+    const newSize = size / 3;
 
-    const initialSquareLength = 2.0;
-    const initialSquareCenter = [0, 0];
-    const vertices = drawSierpinski(initialSquareCenter, initialSquareLength, numberOfSteps);
+    for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) {
+            const newX = x + i * newSize;
+            const newY = y + j * newSize;
 
-    const verticesPerSquare = 6;
+            // If it's the center square
+            if (i === 1 && j === 1) {
+                // Draw the center square
+                const vertices = [
+                    newX, newY,
+                    newX + newSize, newY,
+                    newX + newSize, newY + newSize,
 
-    for (let i = 0; i < vertices.length; i += verticesPerSquare * 2) {
-        const squareVertices = vertices.slice(i, i + verticesPerSquare * 2);
-        
-        // Find center for current square
-        let centerX = 0, centerY = 0;
-        for (let j = 0; j < squareVertices.length; j += 2) {
-            centerX += squareVertices[j];
-            centerY += squareVertices[j + 1];
+                    newX, newY,
+                    newX + newSize, newY + newSize,
+                    newX, newY + newSize,
+                ];
+                drawSquare(vertices);
+            }
+            // If not in the center and iterations remain
+            else if (iterations > 1) {
+                drawCarpet(newX, newY, newSize, iterations - 1);
+            }
         }
-        centerX /= verticesPerSquare;
-        centerY /= verticesPerSquare;
-
-        drawSquare(squareVertices, [centerX, centerY]);
     }
 }
 
+
+
 function animate() {
     if (isRotating) {
-        rotationAngle += rotationSpeed * rotationDirection;
-        drawCarpet(slider.value);
+        let currentTime = Date.now();
+        rotationAngle += rotationSpeed * rotationDirection * (currentTime - (startTime || currentTime));
+        startTime = currentTime;
+
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        drawCarpet(-1, -1, canvasSize, slider.value); // Assuming slider.value is your recursion depth
         requestAnimationFrame(animate);
     }
 }
 
-// ----------------------------------------
-// Globals
-// ----------------------------------------
+// Initial drawing
+gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black
+gl.clear(gl.COLOR_BUFFER_BIT);
+drawCarpet(-1, -1, canvasSize, 1);
 
-const canvas = document.querySelector('#c');
-const gl = canvas.getContext('webgl');
-let isRotating = false; 
-let startTime = null; 
-let rotationAngle = 0;
-let lastRotationAngle = null;
-const rotationSpeed = 0.01;
-let rotationDirection = 1;
-let vertexBuffer = null;
-const shaderProgram = initializeWebGL();
-const uCenterLocation = gl.getUniformLocation(shaderProgram, 'uCenter');
-const uRotationLocation = gl.getUniformLocation(shaderProgram, 'uRotation');
-
-// ----------------------------------------
-// Draw
-// ----------------------------------------
-
-drawCarpet(1);
-
-// ----------------------------------------
 // Event Listeners
-// ----------------------------------------
-
 let slider = document.getElementById('stepSlider');
 let rotateButton = document.getElementById('rotateButton');
 let container = document.getElementById('container');
 
 rotateButton.addEventListener('click', function(event) {
-    event.stopPropagation(); 
+    event.stopPropagation();
     if (!isRotating) {
         startTime = Date.now();
     }
@@ -213,14 +171,16 @@ rotateButton.addEventListener('click', function(event) {
 });
 
 slider.addEventListener('click', function(event) {
-    event.stopPropagation();  // Prevent the click event from bubbling up
+    event.stopPropagation();
     document.getElementById('numSteps').innerHTML = slider.value;
-    drawCarpet(slider.value);
-    event.stopPropagation(); // Prevent propagation
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    drawCarpet(-1, -1, canvasSize, slider.value);
+    event.stopPropagation();
 });
 
 container.addEventListener('click', function(event) {
     if (isRotating) {
-        rotationDirection *= -1; // Reverse the rotation direction
+        rotationDirection *= -1;
     }
 });
